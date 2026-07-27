@@ -1,0 +1,16 @@
+name: forgejo-runner-awaker
+
+services:
+  forgejo-runner-awaker:
+    build: .
+    container_name: runner_listener
+    restart: unless-stopped
+    user: root
+    security_opt:
+      - label:disable
+      - apparmor:unconfined
+    environment:
+      - FORGEJO_API_URL=${FORGEJO_API_URL}
+      - REGISTRATION_TOKEN=${REGISTRATION_TOKEN}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock

@@ -1,0 +1,11 @@
+[project]
+name = "Forgejo-Runner-Awaker"
+version = "0.1.0"
+description = "Simple webhook server to wake up Forgejo ephemeral runners"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "docker>=7.2.0",
+    "fastapi>=0.140.0",
+    "uvicorn>=0.51.0",
+]

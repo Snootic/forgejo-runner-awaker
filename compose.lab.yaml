@@ -1,0 +1,13 @@
+name: forgejo-runner-awaker
+# see https://git.coisas-mais-estranhas.com.br/snootic/lab
+services:
+  mutaria:
+    extends:
+      file: compose.yaml
+      service: forgejo-runner-awaker
+    networks:
+      - local
+
+networks:
+  local:
+    external: true
