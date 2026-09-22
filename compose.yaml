@@ -6,6 +6,8 @@ services:
     container_name: runner_listener
     restart: unless-stopped
     user: root
+    ports:
+      - "127.0.0.1:8000:8000"
     security_opt:
       - label:disable
       - apparmor:unconfined

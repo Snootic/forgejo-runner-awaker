@@ -5,6 +5,7 @@ services:
     extends:
       file: compose.yaml
       service: forgejo-runner-awaker
+    ports: !reset []
     networks:
       - local
 
