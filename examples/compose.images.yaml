@@ -1,0 +1,7 @@
+services:
+  node:
+    image: awaker-node:24
+    build: ./images/node
+  ubuntu:
+    image: awaker-ubuntu:26.04
+    build: ./images/ubuntu

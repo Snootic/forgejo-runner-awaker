@@ -9,3 +9,18 @@ dependencies = [
     "fastapi>=0.140.0",
     "uvicorn>=0.51.0",
 ]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+files = ["awaker", "main.py", "tests"]
+
+[tool.ruff.lint]
+extend-select = ["ANN"]
+
+[dependency-groups]
+dev = [
+    "mypy>=2.4.0",
+    "ruff>=0.17.0",
+    "types-docker>=7.2.0.20261006",
+]

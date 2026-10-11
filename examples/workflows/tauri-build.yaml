@@ -1,0 +1,33 @@
+name: Tauri Linux packages
+on: [push, workflow_dispatch]
+
+jobs:
+  build:
+    runs-on: ubuntu-build
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      CARGO_BUILD_JOBS: "2"
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Linux build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential pkg-config libwebkit2gtk-4.1-dev wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+          rm -rf /var/lib/apt/lists/*
+      - name: Install Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup.sh
+          sh /tmp/rustup.sh -y --profile minimal
+          printf '%s\n' "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - run: npm ci
+      - run: npm run tauri -- build --bundles deb
+      - name: Save installable packages
+        uses: https://code.forgejo.org/forgejo/upload-artifact@v4
+        with:
+          name: linux-packages
+          path: src-tauri/target/release/bundle/deb/*.deb
+          if-no-files-found: error

@@ -1,5 +1,4 @@
 name: forgejo-runner-awaker
-# see https://git.coisas-mais-estranhas.com.br/snootic/lab
 services:
   mutaria:
     extends:
@@ -12,3 +11,6 @@ services:
 networks:
   local:
     external: true
+
+volumes:
+  awaker-state:

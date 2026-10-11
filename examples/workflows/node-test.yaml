@@ -1,0 +1,12 @@
+name: Node tests
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: node-small
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@v7
+        with:
+          persist-credentials: false
+      - run: npm ci
+      - run: npm test

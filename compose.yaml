@@ -12,7 +12,23 @@ services:
       - label:disable
       - apparmor:unconfined
     environment:
-      - FORGEJO_API_URL=${FORGEJO_API_URL}
-      - REGISTRATION_TOKEN=${REGISTRATION_TOKEN}
+      - FORGEJO_API_URL=${FORGEJO_API_URL:?Set FORGEJO_API_URL in .env}
+      - FORGEJO_REPOS=${FORGEJO_REPOS:-}
+      - FORGEJO_SCOPE=${FORGEJO_SCOPE:-}
+      - FORGEJO_API_TOKEN=${FORGEJO_API_TOKEN:?Set FORGEJO_API_TOKEN in .env}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET:-}
+      - POLL_INTERVAL=${POLL_INTERVAL:-}
+      - MAX_RUNNERS=${MAX_RUNNERS:-}
+      - RUNNER_JOB_TIMEOUT=${RUNNER_JOB_TIMEOUT:-}
+      - JOB_LIMITS=${JOB_LIMITS:-}
+      - LOG_LEVEL=${LOG_LEVEL:-}
+      - RUNNER_IMAGE=${RUNNER_IMAGE:-}
+      - JOB_IMAGES=${JOB_IMAGES:-}
+      - JOB_PROFILES=${JOB_PROFILES:-}
+      - STATE_PATH=/data/awaker.sqlite3
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - awaker-state:/data
+
+volumes:
+  awaker-state:
