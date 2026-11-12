@@ -82,10 +82,15 @@ these tools; the Ubuntu workflow installs build dependencies as needed.
 
 ## Operation
 
-Polling checks queues every `POLL_INTERVAL` seconds (default 5). For Forgejo 17
-webhooks, set `WEBHOOK_SECRET` and forward `workflow_job_waiting` events to
-`POST /webhook` through your reverse proxy. Polling and webhooks share dispatch
-claims, and each runner is bound to one job attempt.
+Polling checks queues every `POLL_INTERVAL` seconds (default 5). While Forgejo is
+unreachable, the delay doubles up to 60 seconds and each failure logs one line;
+set `LOG_LEVEL=DEBUG` for tracebacks. For Forgejo 17 webhooks, set
+`WEBHOOK_SECRET` and forward `workflow_job_waiting` events to `POST /webhook`
+(directly on the Docker network or through your reverse proxy). Forgejo refuses
+webhook targets on private addresses unless `[webhook] ALLOWED_HOST_LIST` allows
+them. With webhooks working, raise `POLL_INTERVAL` (for example 60) so polling is
+only a fallback. Polling and webhooks share dispatch claims, and each runner is
+bound to one job attempt.
 
 - Run one controller process per Forgejo instance and Docker daemon. Multiple replicas or Uvicorn workers don't share claims.
 - Keep the `awaker-state` volume. It stores cleanup progress, recovers runners after restarts, and retries failed cleanup. Scope changes still require permission to clean up old registrations.

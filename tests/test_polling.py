@@ -69,3 +69,39 @@ class PollingTests(unittest.TestCase):
             self.cycle()
         self.runners.forgejo.waiting_jobs.assert_called_once_with("org:team")
         self.runners.dispatch.assert_called_once_with("team/new-project", job, {})
+
+    def test_failures_back_off_and_log_one_line(self) -> None:
+        self.runners.forgejo.waiting_jobs.side_effect = RuntimeError("down")
+        sleep = AsyncMock(side_effect=[None, None, asyncio.CancelledError])
+        with (
+            patch.object(asyncio, "sleep", sleep),
+            self.assertLogs(polling.logger, level="ERROR") as logs,
+            self.assertRaises(asyncio.CancelledError),
+        ):
+            asyncio.run(polling.poll_forever(cast(Runners, self.runners)))
+        self.assertEqual([call.args[0] for call in sleep.await_args_list], [10, 20, 40])
+        self.assertTrue(all(not record.exc_info for record in logs.records))
+
+    def test_recovery_restores_the_poll_interval(self) -> None:
+        self.runners.forgejo.waiting_jobs.side_effect = [
+            RuntimeError("down"),
+            RuntimeError("down"),
+            [],
+            [],
+            [],
+            [],
+        ]
+        sleep = AsyncMock(side_effect=[None, None, asyncio.CancelledError])
+        with (
+            patch.object(asyncio, "sleep", sleep),
+            self.assertLogs(polling.logger) as logs,
+            self.assertRaises(asyncio.CancelledError),
+        ):
+            asyncio.run(polling.poll_forever(cast(Runners, self.runners)))
+        self.assertEqual([call.args[0] for call in sleep.await_args_list], [10, 5, 5])
+        self.assertIn("recovered", logs.output[-1])
+
+    def test_backoff_is_capped(self) -> None:
+        self.assertEqual(polling.retry_delay(5, 0), 5)
+        self.assertEqual(polling.retry_delay(5, 20), polling.MAX_BACKOFF)
+        self.assertEqual(polling.retry_delay(120, 3), 120)
