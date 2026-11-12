@@ -59,6 +59,7 @@ class Cleanup:
                         if runner["name"] == name
                     ]
                     if not runner_ids:
+                        self.state.forget(name)
                         return
                 else:
                     runner_ids = [entry["runner_id"]]

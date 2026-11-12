@@ -63,16 +63,25 @@ class CleanupTests(unittest.TestCase):
         name = self.state.begin("owner/repo", "attempt")
         self.claims.acquire("owner/repo#attempt")
         self.client.containers.get.side_effect = docker.errors.NotFound("never created")
-        self.api.list_runners.return_value = []
-        self.cleanup.finish(name)
-        self.assertEqual(len(self.claims), 0)
-        self.assertIsNotNone(self.state.get(name))
         self.api.list_runners.return_value = [
             {"id": 42, "name": name},
             {"id": 43, "name": "someone-else"},
         ]
-        self.cleanup.retry()
+        self.cleanup.finish(name)
+        self.assertEqual(len(self.claims), 0)
         self.api.delete_runner.assert_called_once_with("owner/repo", 42)
+        self.assertIsNone(self.state.get(name))
+
+    def test_attempt_without_registration_is_forgotten_not_retried_forever(
+        self,
+    ) -> None:
+        name = self.state.begin("owner/repo", "attempt")
+        self.claims.acquire("owner/repo#attempt")
+        self.client.containers.get.side_effect = docker.errors.NotFound("never created")
+        self.api.list_runners.return_value = [{"id": 43, "name": "someone-else"}]
+        self.cleanup.finish(name)
+        self.assertEqual(len(self.claims), 0)
+        self.api.delete_runner.assert_not_called()
         self.assertIsNone(self.state.get(name))
 
     def test_restart_cleans_registration_created_before_container_creation(
