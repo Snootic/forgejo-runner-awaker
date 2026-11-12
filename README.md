@@ -67,14 +67,21 @@ Use `runs-on: node-small` for Node tests or `runs-on: ubuntu-build` for builds.
 
 Only `image` is required. Defaults are 2 GiB of memory, 2 CPUs, 512 PIDs, and
 `RUNNER_JOB_TIMEOUT` seconds (10800 by default). Profile timeouts cannot exceed
-that global limit. `MAX_RUNNERS` defaults to 4 concurrent jobs; size the profiles
-and concurrency for your host.
+that global limit. A job's `runs-on` labels must all name profiles with identical
+settings; other labels are rejected, so every job runs under a profile's limits.
+There's no built-in `ubuntu-latest` mapping: add `"ubuntu-latest"` as a profile
+label if you want it.
 
-For simple image mappings, use `JOB_IMAGES={"node":"node:24-bookworm-slim"}`;
-these jobs use `JOB_LIMITS` and `RUNNER_JOB_TIMEOUT`. Local images tagged
-`<label>-runner` are also discovered. Explicit mappings take precedence.
-Every requested label must resolve to the same image and compatible profile.
-There's no built-in `ubuntu-latest` mapping.
+Memory is a hard cap: the profile sets both `--memory` and `--memory-swap`, and a
+job that exceeds it is killed. Workflows cannot raise it. The memory is used only
+as the job needs it.
+
+`MAX_MEMORY` (default `8g`) is the total memory budget for running jobs. A job is
+dispatched only if its profile's memory fits in what is left, so `MAX_MEMORY=12g`
+runs three 4 GiB jobs or twenty-four 512 MiB jobs at once. Jobs that don't fit
+stay waiting until another finishes. Each profile must fit within `MAX_MEMORY`.
+The runner container that supervises each job is also limited to 512 MiB; that
+is not counted in the budget.
 
 Workflows can override the image with `container.image`. JavaScript actions need
 Node.js, and checkout needs Git inside the job image. Both example images include
@@ -97,7 +104,7 @@ bound to one job attempt.
 - The Forgejo URL must be reachable from the controller and runners. Runners use Docker's default bridge, outside the Compose service network.
 - The controller and runner containers need the host Docker socket. Job containers receive neither that socket nor privileged mode; jobs needing Docker should use an isolated daemon.
 
-Startup checks dependencies and image mappings. `GET /health/ready` returns 503
+Startup checks Docker and Forgejo access. `GET /health/ready` returns 503
 when those checks fail; registration also requires the write permissions above.
 The default runner image is `data.forgejo.org/forgejo/runner:13`. Tags refresh at
 startup, and registry failures prevent startup. Set `RUNNER_IMAGE` to use another

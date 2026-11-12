@@ -4,9 +4,7 @@ import json
 from typing import cast
 
 from fastapi import HTTPException, Request
-from fastapi.concurrency import run_in_threadpool
 
-from .images import list_environments
 from .models import Job
 from .runners import Runners
 
@@ -61,7 +59,4 @@ async def handle_webhook(request: Request) -> dict[str, str]:
     repo, job = delivery
     if not runners.settings.accepts_repo(repo):
         return {"status": "Repository not served"}
-    environments = await run_in_threadpool(
-        list_environments, runners.docker, runners.settings.images
-    )
-    return {"status": runners.dispatch(repo, job, environments)}
+    return {"status": runners.dispatch(repo, job)}

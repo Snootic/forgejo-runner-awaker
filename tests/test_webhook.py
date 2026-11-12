@@ -13,6 +13,7 @@ from fastapi import HTTPException, Request
 from awaker import runners as runner_module
 from awaker import webhook as triggers
 from awaker.config import Settings
+from awaker.profiles import JobProfile
 from awaker.runners import Runners
 from awaker.state import State
 
@@ -24,7 +25,8 @@ class WebhookTests(unittest.TestCase):
             repos=("owner/repo",),
             api_token="fake",
             webhook_secret=b"secret",
-            max_runners=1,
+            max_memory=2**30,
+            job_profiles={"ubuntu-latest": JobProfile("node:lts", memory="1g")},
         )
         self.client = Mock()
         self.api = Mock()
@@ -66,12 +68,9 @@ class WebhookTests(unittest.TestCase):
             )
             return await triggers.handle_webhook(cast(Request, request))
 
-        with (
-            patch.object(triggers, "list_environments", return_value={}),
-            patch.object(
-                self.runners, "dispatch", return_value="Runner dispatched"
-            ) as dispatch,
-        ):
+        with patch.object(
+            self.runners, "dispatch", return_value="Runner dispatched"
+        ) as dispatch:
             for action in ("new_job_attempt", "job_status_changed"):
                 self.assertEqual(
                     asyncio.run(deliver(action))["status"], "Runner dispatched"
@@ -121,17 +120,11 @@ class WebhookTests(unittest.TestCase):
                 b"secret", body, hashlib.sha256
             ).hexdigest(),
         }
-        environments = {"ubuntu-latest": "docker://node:lts"}
-        with (
-            patch.object(
-                runner_module, "threading", SimpleNamespace(Thread=Mock())
-            ) as threads,
-            patch.object(triggers, "list_environments", return_value=environments),
-        ):
+        with patch.object(
+            runner_module, "threading", SimpleNamespace(Thread=Mock())
+        ) as threads:
             self.assertEqual(
-                self.runners.dispatch(
-                    "owner/repo", json.loads(body)["job"], environments
-                ),
+                self.runners.dispatch("owner/repo", json.loads(body)["job"]),
                 "Runner dispatched",
             )
             result = asyncio.run(triggers.handle_webhook(cast(Request, request)))

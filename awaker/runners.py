@@ -1,7 +1,6 @@
 import logging
 import threading
-from collections.abc import Mapping, Sequence
-from dataclasses import replace
+from collections.abc import Sequence
 from os import stat
 from urllib.error import HTTPError
 
@@ -13,14 +12,15 @@ from .cleanup import Cleanup
 from .config import Settings
 from .execution import runner_script
 from .forgejo import Forgejo
-from .images import runner_labels
 from .models import Job, StateEntry
-from .profiles import select_profile
+from .profiles import JobProfile, select_profile
 from .state import State
 
 logger = logging.getLogger(__name__)
 DOCKER_SOCKET = "/var/run/docker.sock"
 MANAGED_LABEL = "org.forgejo.awaker"
+MEMORY_LABEL = f"{MANAGED_LABEL}.memory"
+RUNNER_MEMORY = "512m"
 
 
 class Runners:
@@ -30,7 +30,7 @@ class Runners:
         self.settings = settings
         self.docker = client
         self.forgejo = forgejo
-        self.claims = Claims(settings.max_runners)
+        self.claims = Claims(settings.max_memory)
         self.state = state
         self.cleanup = Cleanup(state, client, forgejo, self.claims)
 
@@ -61,9 +61,8 @@ class Runners:
         repo: str,
         job: Job,
         labels: Sequence[str],
-        job_settings: Settings | None = None,
+        profile: JobProfile,
     ) -> None:
-        job_settings = job_settings or self.settings
         handle = job["handle"]
         name = None
         runner = None
@@ -79,7 +78,9 @@ class Runners:
                 command=[
                     "sh",
                     "-c",
-                    runner_script(job_settings, labels, runner["uuid"], handle),
+                    runner_script(
+                        profile, self.settings.url, labels, runner["uuid"], handle
+                    ),
                 ],
                 environment={"RUNNER_TOKEN": runner["token"]},
                 labels={
@@ -88,7 +89,10 @@ class Runners:
                     f"{MANAGED_LABEL}.handle": handle,
                     f"{MANAGED_LABEL}.runner-id": str(runner["id"]),
                     f"{MANAGED_LABEL}.scope": scope,
+                    MEMORY_LABEL: str(profile.memory_bytes),
                 },
+                mem_limit=RUNNER_MEMORY,
+                memswap_limit=RUNNER_MEMORY,
                 group_add=[str(stat(DOCKER_SOCKET).st_gid)],
                 security_opt=["label:disable"],
                 volumes={DOCKER_SOCKET: {"bind": DOCKER_SOCKET, "mode": "rw"}},
@@ -111,6 +115,12 @@ class Runners:
             return
         logger.info("%s job %s: %s started", repo, handle, name)
         self.supervise_runner(repo, handle, name, container)
+
+    def largest_profile(self) -> int:
+        return max(
+            (profile.memory_bytes for profile in self.settings.job_profiles.values()),
+            default=0,
+        )
 
     def recover_runners(self) -> None:
         containers = self.docker.containers.list(
@@ -136,11 +146,14 @@ class Runners:
                 entry = self.state.get(name)
                 assert entry is not None
             if not entry["released"]:
-                self.claims.restore(claim_key(entry["repo"], entry["handle"]))
+                self.claims.restore(
+                    claim_key(entry["repo"], entry["handle"]),
+                    int(container.labels.get(MEMORY_LABEL, self.largest_profile())),
+                )
             recovered.append((entry, container))
         for entry in entries.values():
             if not entry["released"]:
-                self.claims.restore(claim_key(entry["repo"], entry["handle"]))
+                self.claims.restore(claim_key(entry["repo"], entry["handle"]), 0)
             self.state.mark_pending(entry["name"])
         for entry, container in recovered:
             if entry["pending"] or container.status in {"created", "exited", "dead"}:
@@ -154,29 +167,21 @@ class Runners:
         self.cleanup.retry()
         logger.info("recovered %s runner containers", len(recovered))
 
-    def dispatch(self, repo: str, job: Job, environments: Mapping[str, str]) -> str:
+    def dispatch(self, repo: str, job: Job) -> str:
         if not self.settings.accepts_repo(repo):
             return "Repository not served"
         requested_labels = job.get("runs_on") or []
-        labels = runner_labels(requested_labels, environments)
-        if labels is None:
-            return f"No runner image for labels {job.get('runs_on')}"
         try:
             profile = select_profile(requested_labels, self.settings.job_profiles)
         except ValueError as error:
             return str(error)
-        job_settings = self.settings
-        if profile is not None:
-            job_settings = replace(
-                self.settings, job_limits=profile.limits, job_timeout=profile.timeout
-            )
         key = claim_key(repo, job["handle"])
-        if not self.claims.acquire(key):
-            return "Already dispatched, or at runner capacity"
+        if not self.claims.acquire(key, profile.memory_bytes):
+            return "Already dispatched, or at memory capacity"
         try:
             threading.Thread(
                 target=self.run_runner,
-                args=(repo, job, labels, job_settings),
+                args=(repo, job, profile.runner_labels(requested_labels), profile),
                 daemon=True,
             ).start()
         except Exception:

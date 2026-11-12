@@ -8,8 +8,10 @@ import docker
 
 from awaker import cleanup as cleanup_module
 from awaker import runners as runner_module
+from awaker.claims import Claims
 from awaker.config import Settings
-from awaker.runners import MANAGED_LABEL, Runners
+from awaker.profiles import JobProfile
+from awaker.runners import MANAGED_LABEL, MEMORY_LABEL, Runners
 from awaker.state import State
 
 
@@ -20,7 +22,7 @@ class RunnerTests(unittest.TestCase):
             repos=("owner/repo",),
             api_token="fake",
             webhook_secret=b"secret",
-            max_runners=1,
+            max_memory=1,
         )
         self.client = Mock()
         self.api = Mock()
@@ -28,6 +30,7 @@ class RunnerTests(unittest.TestCase):
         self.addCleanup(self.state.db.close)
         self.runners = Runners(self.settings, self.client, self.api, self.state)
         self.claims = self.runners.claims
+        self.profile = JobProfile("node:lts", memory="1")
 
     def container(self, status: str = "running") -> Mock:
         container = Mock()
@@ -38,6 +41,7 @@ class RunnerTests(unittest.TestCase):
             f"{MANAGED_LABEL}.repo": "owner/repo",
             f"{MANAGED_LABEL}.handle": "attempt",
             f"{MANAGED_LABEL}.runner-id": "42",
+            MEMORY_LABEL: "1",
         }
         container.wait.return_value = {"StatusCode": 0}
         return container
@@ -52,6 +56,25 @@ class RunnerTests(unittest.TestCase):
         self.assertFalse(self.claims.acquire("c"))
         self.claims.release("b")
         self.assertTrue(self.claims.acquire("c"))
+
+    def test_claims_reserve_weights_against_the_capacity(self) -> None:
+        claims = Claims(10)
+        self.assertTrue(claims.acquire("big", 6))
+        self.assertFalse(claims.acquire("too-big", 5))
+        self.assertTrue(claims.acquire("small", 4))
+        claims.release("big")
+        self.assertTrue(claims.acquire("too-big", 6))
+
+    def test_recovery_restores_the_memory_reserved_for_each_runner(self) -> None:
+        container = self.container()
+        container.labels[MEMORY_LABEL] = "1"
+        self.runners.claims = Claims(3)
+        self.runners.cleanup.claims = self.runners.claims
+        self.client.containers.list.return_value = [container]
+        with patch.object(runner_module, "threading", SimpleNamespace(Thread=Mock())):
+            self.runners.recover_runners()
+        self.assertTrue(self.runners.claims.acquire("a", 2))
+        self.assertFalse(self.runners.claims.acquire("b", 1))
 
     def test_supervision_cleans_success_wait_and_log_failures(self) -> None:
         for failure in (None, "wait", "logs"):
@@ -107,12 +130,17 @@ class RunnerTests(unittest.TestCase):
             self.assertLogs(runner_module.logger, level="ERROR"),
         ):
             self.runners.run_runner(
-                "owner/repo", {"handle": "attempt"}, ["ubuntu-latest:docker://node:lts"]
+                "owner/repo",
+                {"handle": "attempt"},
+                ["ubuntu-latest:docker://node:lts"],
+                self.profile,
             )
         container.remove.assert_called_once_with(force=True, v=True)
         self.assertEqual(len(self.claims), 0)
-        labels = self.client.containers.create.call_args.kwargs["labels"]
-        self.assertEqual(labels[f"{MANAGED_LABEL}.runner-id"], "42")
+        created = self.client.containers.create.call_args.kwargs
+        self.assertEqual(created["labels"][f"{MANAGED_LABEL}.runner-id"], "42")
+        self.assertEqual(created["labels"][MEMORY_LABEL], "1")
+        self.assertEqual(created["mem_limit"], created["memswap_limit"])
 
     def test_registration_intent_precedes_a_lost_api_response(self) -> None:
         self.claims.acquire("owner/repo#attempt")
@@ -128,7 +156,10 @@ class RunnerTests(unittest.TestCase):
         self.api.create_runner.side_effect = register
         with self.assertLogs(runner_module.logger):
             self.runners.run_runner(
-                "owner/repo", {"handle": "attempt"}, ["node:docker://node:lts"]
+                "owner/repo",
+                {"handle": "attempt"},
+                ["node:docker://node:lts"],
+                self.profile,
             )
         self.api.delete_runner.assert_called_once_with("owner/repo", 42)
         self.client.containers.create.assert_not_called()
@@ -139,11 +170,7 @@ class RunnerTests(unittest.TestCase):
         self,
     ) -> None:
         self.runners.settings = replace(self.settings, scope="org:owner", repos=())
-        job_settings = replace(
-            self.runners.settings,
-            job_limits="--memory=512m --cpus=1 --pids-limit=128",
-            job_timeout=600,
-        )
+        profile = JobProfile("node:lts", memory="512m", cpus=1, pids=128, timeout=600)
         self.api.create_runner.return_value = {
             "id": 42,
             "uuid": "uuid",
@@ -159,11 +186,13 @@ class RunnerTests(unittest.TestCase):
                 "owner/repo",
                 {"handle": "attempt"},
                 ["node-small:docker://node:lts"],
-                job_settings,
+                profile,
             )
         self.assertEqual(self.api.create_runner.call_args.args[0], "org:owner")
         script = self.client.containers.create.call_args.kwargs["command"][2]
-        self.assertIn("--memory=512m --cpus=1 --pids-limit=128", script)
+        self.assertIn(
+            "--memory=512m --memory-swap=512m --cpus=1 --pids-limit=128", script
+        )
         self.assertIn("timeout: 600s", script)
         self.api.delete_runner.assert_called_once_with("org:owner", 42)
         self.assertEqual(self.state.entries(), [])

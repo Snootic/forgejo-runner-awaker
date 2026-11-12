@@ -18,12 +18,10 @@ services:
       - FORGEJO_API_TOKEN=${FORGEJO_API_TOKEN:?Set FORGEJO_API_TOKEN in .env}
       - WEBHOOK_SECRET=${WEBHOOK_SECRET:-}
       - POLL_INTERVAL=${POLL_INTERVAL:-}
-      - MAX_RUNNERS=${MAX_RUNNERS:-}
+      - MAX_MEMORY=${MAX_MEMORY:-}
       - RUNNER_JOB_TIMEOUT=${RUNNER_JOB_TIMEOUT:-}
-      - JOB_LIMITS=${JOB_LIMITS:-}
       - LOG_LEVEL=${LOG_LEVEL:-}
       - RUNNER_IMAGE=${RUNNER_IMAGE:-}
-      - JOB_IMAGES=${JOB_IMAGES:-}
       - JOB_PROFILES=${JOB_PROFILES:-}
       - STATE_PATH=/data/awaker.sqlite3
     volumes:

@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from collections.abc import AsyncGenerator, Mapping
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager, suppress
 from typing import cast
 
@@ -11,7 +11,6 @@ from fastapi.concurrency import run_in_threadpool
 from .cleanup import cleanup_forever
 from .config import Settings
 from .forgejo import Forgejo
-from .images import list_environments
 from .polling import poll_forever
 from .runners import Runners
 from .state import State
@@ -20,16 +19,9 @@ from .webhook import handle_webhook
 logger = logging.getLogger(__name__)
 
 
-async def check_dependencies(
-    client: docker.DockerClient, forgejo: Forgejo, job_images: Mapping[str, str]
-) -> None:
+async def check_dependencies(client: docker.DockerClient, forgejo: Forgejo) -> None:
     await run_in_threadpool(client.ping)
     await run_in_threadpool(forgejo.check_access)
-    environments = await run_in_threadpool(list_environments, client, job_images)
-    if not environments:
-        raise ValueError(
-            "No job images available; set JOB_IMAGES, JOB_PROFILES, or tag an image <label>-runner"
-        )
 
 
 @asynccontextmanager
@@ -41,7 +33,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     )
     client = docker.from_env()
     forgejo = Forgejo(settings)
-    await check_dependencies(client, forgejo, settings.images)
+    await check_dependencies(client, forgejo)
     await prepare_runner_image(client, settings.runner_image)
     state = State(settings.state_path, settings.url)
     runners = Runners(settings, client, forgejo, state)
@@ -52,9 +44,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         asyncio.create_task(cleanup_forever(runners.cleanup, settings.poll_interval)),
     )
     logger.info(
-        "serving %s; capacity %s",
+        "serving %s; memory budget %s MiB",
         ", ".join(settings.poll_targets),
-        settings.max_runners,
+        settings.max_memory // 2**20,
     )
     try:
         yield
@@ -84,9 +76,7 @@ app.add_api_route("/webhook", handle_webhook, methods=["POST"])
 async def readiness(request: Request) -> dict[str, str]:
     runners = cast(Runners, request.app.state.runners)
     try:
-        await check_dependencies(
-            runners.docker, runners.forgejo, runners.settings.images
-        )
+        await check_dependencies(runners.docker, runners.forgejo)
     except Exception:
         logger.exception("readiness check failed")
         raise HTTPException(

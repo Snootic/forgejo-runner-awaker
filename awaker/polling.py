@@ -3,7 +3,6 @@ import logging
 
 from fastapi.concurrency import run_in_threadpool
 
-from .images import list_environments
 from .runners import Runners
 
 logger = logging.getLogger(__name__)
@@ -20,20 +19,15 @@ def retry_delay(interval: float, failures: int) -> float:
 async def poll_forever(runners: Runners) -> None:
     failures = 0
     while True:
-        environments = None
         failed = False
         for scope in runners.settings.poll_targets:
             try:
                 jobs = await run_in_threadpool(runners.forgejo.waiting_jobs, scope)
                 if not jobs:
                     continue
-                if environments is None:
-                    environments = await run_in_threadpool(
-                        list_environments, runners.docker, runners.settings.images
-                    )
                 for job in jobs:
                     repo = job.get("repository", scope)
-                    result = runners.dispatch(repo, job, environments)
+                    result = runners.dispatch(repo, job)
                     logger.debug(
                         "%s job %s: %s",
                         repo,

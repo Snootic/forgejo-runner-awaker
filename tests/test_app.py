@@ -42,11 +42,6 @@ class AppTests(unittest.TestCase):
             patch.object(docker, "from_env", return_value=client),
             patch.object(app_module, "Forgejo", return_value=api),
             patch.object(app_module, "State"),
-            patch.object(
-                app_module,
-                "list_environments",
-                return_value={"node": "docker://node:lts"},
-            ),
             patch.object(app_module, "Runners", return_value=manager),
             patch.object(app_module, "poll_forever", poll),
         ):
@@ -104,43 +99,18 @@ class AppTests(unittest.TestCase):
         manager.assert_not_called()
 
     def test_readiness_reports_dependency_failures(self) -> None:
-        manager = SimpleNamespace(
-            docker=Mock(), forgejo=Mock(), settings=SimpleNamespace(images={})
-        )
+        manager = SimpleNamespace(docker=Mock(), forgejo=Mock())
         request = SimpleNamespace(
             app=SimpleNamespace(state=SimpleNamespace(runners=manager))
         )
-        with patch.object(
-            app_module, "list_environments", return_value={"node": "docker://node:lts"}
-        ):
-            self.assertEqual(
-                asyncio.run(app_module.readiness(cast(Request, request))),
-                {"status": "ready"},
-            )
-            manager.forgejo.check_access.side_effect = RuntimeError("unavailable")
-            with (
-                self.assertLogs(app_module.logger),
-                self.assertRaises(HTTPException) as error,
-            ):
-                asyncio.run(app_module.readiness(cast(Request, request)))
-            self.assertEqual(error.exception.status_code, 503)
-
-    def test_no_job_images_prevents_startup(self) -> None:
-        settings = Settings(
-            url="https://forgejo.example", repos=("owner/repo",), api_token="fake"
+        self.assertEqual(
+            asyncio.run(app_module.readiness(cast(Request, request))),
+            {"status": "ready"},
         )
-
-        async def check() -> None:
-            async with app_module.lifespan(FastAPI()):
-                self.fail("startup should fail")
-
+        manager.forgejo.check_access.side_effect = RuntimeError("unavailable")
         with (
-            patch.object(Settings, "from_env", return_value=settings),
-            patch.object(docker, "from_env", return_value=Mock()),
-            patch.object(app_module, "Forgejo", return_value=Mock()),
-            patch.object(app_module, "list_environments", return_value={}),
-            patch.object(app_module, "Runners") as manager,
-            self.assertRaises(ValueError),
+            self.assertLogs(app_module.logger),
+            self.assertRaises(HTTPException) as error,
         ):
-            asyncio.run(check())
-        manager.assert_not_called()
+            asyncio.run(app_module.readiness(cast(Request, request)))
+        self.assertEqual(error.exception.status_code, 503)

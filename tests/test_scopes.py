@@ -32,6 +32,7 @@ class ScopeTests(unittest.TestCase):
         values = {
             "FORGEJO_API_URL": "https://forgejo.example",
             "FORGEJO_API_TOKEN": "fake",
+            "JOB_PROFILES": '{"node":{"image":"node:lts"}}',
         }
         with patch.dict(os.environ, values | {"FORGEJO_SCOPE": "org:team"}, clear=True):
             settings = Settings.from_env()

@@ -16,8 +16,19 @@ class JobProfile:
     timeout: int = 10800
 
     @property
+    def memory_bytes(self) -> int:
+        return int(parse_bytes(self.memory))
+
+    @property
     def limits(self) -> str:
-        return f"--memory={self.memory} --cpus={self.cpus:g} --pids-limit={self.pids}"
+        """Docker options; equal memory and swap limits make the cap hard."""
+        return (
+            f"--memory={self.memory} --memory-swap={self.memory} "
+            f"--cpus={self.cpus:g} --pids-limit={self.pids}"
+        )
+
+    def runner_labels(self, labels: Sequence[str]) -> list[str]:
+        return [f"{label}:docker://{self.image}" for label in labels]
 
     def validate(self, ceiling: int) -> None:
         if (
@@ -78,8 +89,10 @@ def parse_profiles(raw: str, ceiling: int) -> dict[str, JobProfile]:
 
 def select_profile(
     labels: Sequence[str], profiles: dict[str, JobProfile]
-) -> JobProfile | None:
-    selected = {profiles[label] for label in labels if label in profiles}
+) -> JobProfile:
+    if not labels or any(label not in profiles for label in labels):
+        raise ValueError(f"No job profile for labels {list(labels)}")
+    selected = {profiles[label] for label in labels}
     if len(selected) > 1:
-        raise ValueError("Job labels select conflicting resource profiles")
-    return selected.pop() if selected else None
+        raise ValueError("Job labels select conflicting profiles")
+    return selected.pop()

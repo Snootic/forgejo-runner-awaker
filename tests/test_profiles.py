@@ -11,9 +11,7 @@ from awaker.state import State
 
 
 class ProfileTests(unittest.TestCase):
-    def test_environment_profiles_supply_images_and_reject_mapping_conflicts(
-        self,
-    ) -> None:
+    def test_environment_profiles_supply_images_and_default_timeout(self) -> None:
         values = {
             "FORGEJO_API_URL": "https://forgejo.example",
             "FORGEJO_API_TOKEN": "fake",
@@ -22,15 +20,8 @@ class ProfileTests(unittest.TestCase):
         }
         with patch.dict(os.environ, values, clear=True):
             settings = Settings.from_env()
-        self.assertEqual(settings.images, {"node": "node:24"})
+        self.assertEqual(settings.job_profiles["node"].image, "node:24")
         self.assertEqual(settings.job_profiles["node"].timeout, settings.job_timeout)
-        with (
-            patch.dict(
-                os.environ, values | {"JOB_IMAGES": '{"node":"node:22"}'}, clear=True
-            ),
-            self.assertRaisesRegex(ValueError, "disagree"),
-        ):
-            Settings.from_env()
 
     def test_profiles_select_images_and_resource_limits(self) -> None:
         profiles = parse_profiles(
@@ -38,10 +29,23 @@ class ProfileTests(unittest.TestCase):
             10800,
         )
         profile = profiles["node-small"]
-        self.assertEqual(profile.limits, "--memory=512m --cpus=0.5 --pids-limit=128")
+        self.assertEqual(
+            profile.limits,
+            "--memory=512m --memory-swap=512m --cpus=0.5 --pids-limit=128",
+        )
         self.assertEqual(profile.timeout, 600)
         self.assertIs(select_profile(["node-small"], profiles), profile)
-        self.assertIsNone(select_profile(["other"], profiles))
+        self.assertEqual(
+            profile.runner_labels(["node-small"]),
+            ["node-small:docker://node:24-bookworm-slim"],
+        )
+
+    def test_every_label_must_name_a_profile(self) -> None:
+        profiles = {"a": JobProfile("node:lts"), "b": JobProfile("node:lts")}
+        self.assertIs(select_profile(["a", "b"], profiles), profiles["a"])
+        for labels in ([], ["other"], ["a", "other"]):
+            with self.subTest(labels=labels), self.assertRaises(ValueError):
+                select_profile(labels, profiles)
 
     def test_invalid_profiles_fail_configuration(self) -> None:
         for changes in (
@@ -70,17 +74,14 @@ class ProfileTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             select_profile(["small", "large"], profiles)
 
-    def test_dispatch_passes_selected_profile_to_runner_without_mutating_defaults(
-        self,
-    ) -> None:
+    def test_dispatch_passes_selected_profile_to_runner(self) -> None:
+        profile = JobProfile("node:lts", memory="512m", cpus=1, timeout=600)
         settings = Settings(
             url="https://forgejo.example",
             repos=(),
             api_token="fake",
             scope="org:team",
-            job_profiles={
-                "node-small": JobProfile("node:lts", memory="512m", cpus=1, timeout=600)
-            },
+            job_profiles={"node-small": profile},
         )
         state = State(":memory:", settings.url)
         self.addCleanup(state.db.close)
@@ -88,33 +89,63 @@ class ProfileTests(unittest.TestCase):
         with patch.object(threading, "Thread") as thread:
             self.assertEqual(
                 manager.dispatch(
-                    "team/new-project",
-                    {"handle": "h", "runs_on": ["node-small"]},
-                    {"node-small": "docker://node:lts"},
+                    "team/new-project", {"handle": "h", "runs_on": ["node-small"]}
                 ),
                 "Runner dispatched",
             )
-        job_settings = thread.call_args.kwargs["args"][3]
         self.assertEqual(
-            job_settings.job_limits, "--memory=512m --cpus=1 --pids-limit=512"
+            thread.call_args.kwargs["args"][2:],
+            (["node-small:docker://node:lts"], profile),
         )
-        self.assertEqual(job_settings.job_timeout, 600)
-        self.assertEqual(settings.job_timeout, 10800)
-        self.assertEqual(settings.images, {"node-small": "node:lts"})
 
-    def test_out_of_scope_delivery_never_reserves_capacity(self) -> None:
+    def test_jobs_wait_when_profile_memory_exceeds_the_remaining_budget(self) -> None:
         settings = Settings(
-            url="https://forgejo.example", repos=(), api_token="fake", scope="org:team"
+            url="https://forgejo.example",
+            repos=(),
+            api_token="fake",
+            scope="org:team",
+            max_memory=6 * 2**30,
+            job_profiles={
+                "big": JobProfile("node:lts", memory="4g"),
+                "small": JobProfile("node:lts", memory="2g"),
+            },
+        )
+        state = State(":memory:", settings.url)
+        self.addCleanup(state.db.close)
+        manager = Runners(settings, Mock(), Mock(), state)
+
+        def dispatch(handle: str, label: str) -> str:
+            return manager.dispatch(
+                "team/project", {"handle": handle, "runs_on": [label]}
+            )
+
+        with patch.object(threading, "Thread"):
+            self.assertEqual(dispatch("1", "big"), "Runner dispatched")
+            self.assertIn("memory capacity", dispatch("2", "big"))
+            self.assertEqual(dispatch("3", "small"), "Runner dispatched")
+            self.assertIn("memory capacity", dispatch("4", "small"))
+            manager.claims.release("team/project#1")
+            self.assertEqual(dispatch("2", "big"), "Runner dispatched")
+
+    def test_unknown_labels_and_out_of_scope_delivery_never_reserve_capacity(
+        self,
+    ) -> None:
+        settings = Settings(
+            url="https://forgejo.example",
+            repos=(),
+            api_token="fake",
+            scope="org:team",
+            job_profiles={"node": JobProfile("node:lts")},
         )
         state = State(":memory:", settings.url)
         self.addCleanup(state.db.close)
         manager = Runners(settings, Mock(), Mock(), state)
         self.assertEqual(
-            manager.dispatch(
-                "other/project",
-                {"handle": "h", "runs_on": ["node"]},
-                {"node": "docker://node:lts"},
-            ),
+            manager.dispatch("other/project", {"handle": "h", "runs_on": ["node"]}),
             "Repository not served",
+        )
+        self.assertIn(
+            "No job profile",
+            manager.dispatch("team/project", {"handle": "h", "runs_on": ["gpu"]}),
         )
         self.assertEqual(len(manager.claims), 0)

@@ -11,35 +11,34 @@ class ConfigTests(unittest.TestCase):
             "FORGEJO_API_URL": "https://forgejo.example/",
             "FORGEJO_API_TOKEN": "fake",
             "FORGEJO_REPOS": "owner/repo, owner/repo owner/other",
-            "JOB_IMAGES": '{"node":"node:lts"}',
+            "JOB_PROFILES": '{"node":{"image":"node:lts","memory":"4g"}}',
         }
         with patch.dict(os.environ, values, clear=True):
             settings = Settings.from_env()
         self.assertEqual(settings.url, "https://forgejo.example")
         self.assertEqual(settings.repos, ("owner/repo", "owner/other"))
-        self.assertEqual(settings.max_runners, 4)
-        self.assertEqual(settings.job_images, {"node": "node:lts"})
+        self.assertEqual(settings.max_memory, 8 * 2**30)
+        self.assertEqual(settings.job_profiles["node"].image, "node:lts")
 
     def test_invalid_settings_fail_at_startup(self) -> None:
         values = {
             "FORGEJO_API_URL": "https://forgejo.example",
             "FORGEJO_API_TOKEN": "fake",
             "FORGEJO_REPOS": "owner/repo",
+            "JOB_PROFILES": '{"node":{"image":"node:lts","memory":"4g"}}',
         }
         for name, value in (
-            ("MAX_RUNNERS", "0"),
+            ("MAX_MEMORY", "0"),
+            ("MAX_MEMORY", "garbage"),
+            ("MAX_MEMORY", "3g"),
+            ("JOB_PROFILES", ""),
+            ("JOB_PROFILES", "{}"),
             ("POLL_INTERVAL", "nan"),
             ("RUNNER_JOB_TIMEOUT", "-1"),
-            ("MAX_RUNNERS", "bad"),
             ("FORGEJO_REPOS", "invalid"),
             ("LOG_LEVEL", "invalid"),
             ("FORGEJO_API_URL", "relative"),
             ("FORGEJO_API_TOKEN", ""),
-            ("JOB_IMAGES", "[]"),
-            ("JOB_IMAGES", "invalid"),
-            ("JOB_IMAGES", '{"ubuntu":false}'),
-            ("JOB_IMAGES", '{"":"node:lts"}'),
-            ("JOB_IMAGES", '{"node":"docker://node:lts"}'),
         ):
             with (
                 self.subTest(name=name),
