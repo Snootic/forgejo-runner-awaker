@@ -39,8 +39,13 @@ class Cleanup:
                 container.remove(force=True, v=True)
             except docker.errors.NotFound:
                 pass
-            except Exception:
-                logger.exception("%s: Docker cleanup failed; will retry", name)
+            except Exception as error:
+                logger.error(
+                    "%s: Docker cleanup failed; will retry: %r",
+                    name,
+                    error,
+                    exc_info=logger.isEnabledFor(logging.DEBUG),
+                )
                 return
             if not entry["released"]:
                 self.state.mark_released(name)
@@ -60,8 +65,13 @@ class Cleanup:
                 for runner_id in runner_ids:
                     self.forgejo.delete_runner(scope, runner_id)
                 self.state.forget(name)
-            except Exception:
-                logger.exception("%s: Forgejo cleanup failed; will retry", name)
+            except Exception as error:
+                logger.error(
+                    "%s: Forgejo cleanup failed; will retry: %r",
+                    name,
+                    error,
+                    exc_info=logger.isEnabledFor(logging.DEBUG),
+                )
 
     def retry(self) -> None:
         for entry in self.state.entries():
